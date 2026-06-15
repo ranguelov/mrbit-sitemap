@@ -97,6 +97,7 @@
   .canvas-wrapper { flex: 1; position: relative; overflow: hidden; }
   .canvas-wrapper.panning { cursor: grab; }
   .canvas-wrapper.panning:active { cursor: grabbing; }
+  .canvas-wrapper.actively-panning { cursor: grabbing !important; }
   .canvas-wrapper.connecting { cursor: crosshair; }
 
   #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
@@ -166,18 +167,6 @@
     opacity: 0; cursor: crosshair; z-index: 10; transition: opacity 0.15s;
   }
   .node:hover .connect-handle, .node.selected .connect-handle { opacity: 1; }
-
-  /* ── MINIMAP ── */
-  #minimap {
-    position: absolute; bottom: 12px; right: 12px;
-    width: 160px; height: 100px;
-    background: rgba(12,12,30,0.85);
-    border: 1px solid #2a2a4a;
-    border-radius: 6px;
-    overflow: hidden;
-    z-index: 100;
-  }
-  #minimap canvas { width: 100%; height: 100%; }
 
   /* ── EDITOR PANEL ── */
   .editor-panel {
@@ -279,8 +268,11 @@
     Connect
   </button>
 
-  <button class="tool-btn" id="btn-pan" onclick="togglePanMode()">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v12M2 8h12"/></svg>
+  <button class="tool-btn" id="btn-pan" onclick="togglePanMode()" title="Pan mode [Space+drag or middle mouse]">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 2v12M2 8h12"/>
+      <path d="M5.5 4.5L8 2l2.5 2.5M5.5 11.5L8 14l2.5-2.5M4.5 5.5L2 8l2.5 2.5M11.5 5.5L14 8l-2.5 2.5"/>
+    </svg>
     Pan
   </button>
 
@@ -298,12 +290,17 @@
     Auto Layout
   </button>
 
-  <button class="tool-btn" onclick="clearAll()">
+  <button class="tool-btn" onclick="clearAll()" title="Clear canvas">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10l-1 9H4L3 4zM1 4h14M6 4V2h4v2"/></svg>
     Clear
   </button>
 
-  <button class="fit-btn" onclick="fitToScreen()" title="[F]">Fit</button>
+  <button class="tool-btn" onclick="resetToDefault()" title="Reset to default MrBit.ro data">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8a6 6 0 1 0 1.5-4"/><path d="M2 4v4h4"/></svg>
+    Reset
+  </button>
+
+  <button class="fit-btn" onclick="fitToScreen()" title="Fit to screen [F]">Fit</button>
   <span class="zoom-info" id="zoom-label">100%</span>
 </div>
 
@@ -561,7 +558,7 @@ let ctxNodeId = null;
 let nodeCounter = Date.now();
 
 // ============================================================
-// PERSIST  (v3 — tree layout)
+// PERSIST  (v7 — hierarchical layout)
 // ============================================================
 const STORAGE_VER = 'v7';
 const SK_NODES = `sitemap_mrbit_${STORAGE_VER}_nodes`;
@@ -597,8 +594,6 @@ function autoLayout() {
   const ROW_GAP  = 10;   // vertical gap between nodes in same column
   const L1_GAP   = 70;   // root → sections (vertical)
   const L2_GAP   = 54;   // section → first child (vertical)
-  const SUB_INDENT = W + 18; // sub-children indent (x offset)
-
   // Build structure maps
   const childMap = {};
   edges.forEach(e => {
@@ -689,10 +684,15 @@ function autoLayout() {
 // RENDER
 // ============================================================
 function applyTransform() {
-  canvasEl.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+  const t = `translate(${tx}px,${ty}px) scale(${scale})`;
+  canvasEl.style.transform = t;
   canvasEl.style.transformOrigin = '0 0';
+  // SVG follows the same transform so arrow paths (in canvas-space) render correctly
+  svgEl.style.transform = t;
+  svgEl.style.transformOrigin = '0 0';
   document.getElementById('zoom-label').textContent = Math.round(scale*100)+'%';
-  renderEdges();
+  // No renderEdges() here — SVG CSS transform handles visual alignment during pan/zoom.
+  // renderEdges() is still called from renderAll() and during node drag.
 }
 
 function renderAll() {
@@ -841,15 +841,6 @@ function renderEdges() {
 
 function svgNS(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
 
-function getNodeCenter(el) {
-  const r = el.getBoundingClientRect();
-  const w = canvasWrapper.getBoundingClientRect();
-  return {
-    x: (r.left - w.left - tx) / scale + el.offsetWidth  / 2,
-    y: (r.top  - w.top  - ty) / scale + el.offsetHeight / 2
-  };
-}
-
 // ============================================================
 // SELECTION + EDITOR
 // ============================================================
@@ -880,8 +871,13 @@ function updateNodeFromEditor(){
   const el=document.getElementById(`node-${n.id}`);
   if(el){
     el.className=`node node-${n.type} selected`;
-    el.querySelector('.node-type-label').textContent={section:'Section',page:'Page',state:'State'}[n.type];
-    el.querySelector('.node-title').textContent=n.title||'Untitled';
+    // Rebuild full inner content so url, notes, badge all update live
+    el.querySelector('.node-inner').innerHTML =
+      `<span class="node-type-label">${{section:'Section',page:'Page',state:'State'}[n.type]}</span>`+
+      `<span class="node-title">${escHtml(n.title||'Untitled')}</span>`+
+      (n.url   ? `<span class="node-url">${escHtml(n.url)}</span>` : '')+
+      (n.notes ? `<span class="node-badge">🏷 ${escHtml(n.notes)}</span>` : '')+
+      (n.screenshotCount ? `<span class="node-screenshots-count">📸 ${n.screenshotCount}</span>` : '');
   }
   save();
 }
@@ -921,6 +917,7 @@ document.addEventListener('mousemove',e=>{
     renderEdges(); return;
   }
   if(panning){
+    canvasWrapper.classList.add('actively-panning');
     tx=panning.origTx+(e.clientX-panning.startX);
     ty=panning.origTy+(e.clientY-panning.startY);
     applyTransform();
@@ -928,7 +925,7 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('mouseup',()=>{
   if(dragging){save();dragging=null;}
-  if(panning){panning=null;}
+  if(panning){panning=null;canvasWrapper.classList.remove('actively-panning');}
 });
 
 // ============================================================
@@ -1002,11 +999,14 @@ function fitToScreen(){
   if(!nodes.length)return;
   const xs=nodes.map(n=>n.x), ys=nodes.map(n=>n.y);
   const minX=Math.min(...xs)-30, minY=Math.min(...ys)-30;
-  const maxX=Math.max(...xs)+180, maxY=Math.max(...ys)+90;
+  const maxX=Math.max(...xs)+190, maxY=Math.max(...ys)+100;
   const wRect=canvasWrapper.getBoundingClientRect();
-  const sx=wRect.width/(maxX-minX), sy=wRect.height/(maxY-minY);
+  // Leave room for editor panel (230px + 24px padding) when it is open
+  const editorOpen = editorPanel.classList.contains('visible');
+  const availW = wRect.width - (editorOpen ? 258 : 0);
+  const sx=availW/(maxX-minX), sy=wRect.height/(maxY-minY);
   scale=Math.min(sx,sy,1.2);
-  tx=-minX*scale+(wRect.width-(maxX-minX)*scale)/2;
+  tx=-minX*scale+(availW-(maxX-minX)*scale)/2;
   ty=-minY*scale+(wRect.height-(maxY-minY)*scale)/2;
   applyTransform(); save();
 }
@@ -1038,8 +1038,15 @@ function deleteSelectedNode(){
 }
 function clearAll(){
   if(!nodes.length)return;
-  if(!confirm('Clear entire site map?'))return;
-  nodes=[];edges=[];closeEditor();renderAll();save();
+  if(!confirm('Clear entire site map? This cannot be undone.'))return;
+  nodes=[];edges=[];
+  selectedNodeId=null;
+  editorPanel.classList.remove('visible');
+  tx=0;ty=0;scale=1;
+  renderAll();
+  applyTransform();
+  save();
+  showToast('Canvas cleared');
 }
 
 // ============================================================
@@ -1108,11 +1115,17 @@ document.addEventListener('keydown',e=>{
   if(inInput)return;
   if(e.key==='Delete'||e.key==='Backspace')deleteSelectedNode();
   if(e.key==='Escape'){
-    closeEditor();
     connectMode=false;connectSourceId=null;
     document.getElementById('btn-connect').classList.remove('active');
     canvasWrapper.classList.remove('connecting');
-    renderAll();
+    if(editorPanel.classList.contains('visible')){
+      closeEditor(); // closeEditor calls renderAll internally
+    } else {
+      renderAll();
+    }
+    // Also clear search if it has a value
+    const si=document.getElementById('search-input');
+    if(si.value){si.value='';searchNodes('');}
   }
   if(e.key==='f'||e.key==='F')fitToScreen();
   if(e.key==='s'&&!e.metaKey&&!e.ctrlKey)addNode('section');
@@ -1133,6 +1146,20 @@ let toastTimer;
 function showToast(msg){
   const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+// ============================================================
+// RESET TO DEFAULT
+// ============================================================
+function resetToDefault(){
+  if(!confirm('Reset to default MrBit.ro layout? Your changes will be lost.'))return;
+  nodes = MRBIT_DATA.nodes.map(n=>({...n}));
+  edges = MRBIT_DATA.edges.map(e=>({...e}));
+  nodeCounter = Date.now();
+  selectedNodeId = null;
+  editorPanel.classList.remove('visible');
+  autoLayout();
+  showToast('Reset to MrBit.ro default data');
 }
 
 // ============================================================
