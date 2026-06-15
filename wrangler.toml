@@ -1,0 +1,4 @@
+name = "mrbit-sitemap"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+account_id = "6abc67170208ca50ab66f2e08c1e07b3"
