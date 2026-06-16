@@ -1230,22 +1230,23 @@ function onSsImgError() {
 
 function onIframeLoad() {
   // mrbit.ro blocks iframe embedding via X-Frame-Options
-  // Browser renders its own error page — detect it by trying to access contentDocument
   const iframe = document.getElementById('preview-iframe');
   const liveBlocked = document.getElementById('preview-live-blocked');
   if (!liveBlocked) return;
+  // Skip the initial empty iframe (no src set yet)
+  const src = iframe.getAttribute('src') || '';
+  if (!src || src === 'about:blank') return;
   try {
-    // If cross-origin block: contentDocument is null or accessing it throws
     const doc = iframe.contentDocument;
-    if (!doc || doc.location.href === 'about:blank') {
-      // Still loading or blank — do nothing yet
-      return;
+    if (!doc || doc.location.href === 'about:blank' || doc.location.href === '') {
+      // Chrome behaviour: X-Frame-Options blocked → iframe stays about:blank despite having a src
+      liveBlocked.style.display = '';
+    } else {
+      // Page actually loaded into iframe (no X-Frame block)
+      liveBlocked.style.display = 'none';
     }
-    // Accessible — no X-Frame block (unlikely for mrbit.ro but handle it)
-    liveBlocked.style.display = 'none';
   } catch(e) {
-    // SecurityError = cross-origin loaded = site is reachable but blocked embedding
-    // Show the blocked notice
+    // SecurityError (Firefox/Safari) = cross-origin blocked
     liveBlocked.style.display = '';
   }
 }
