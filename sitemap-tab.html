@@ -1209,7 +1209,16 @@ function goToScreenshots(){
   if(!selectedNodeId)return;
   const n=nodes.find(x=>x.id===selectedNodeId); if(!n)return;
 
-  const url = n.url ? 'https://mrbit.ro'+n.url : 'https://mrbit.ro/en';
+  const rawUrl = n.url || '';
+  let url;
+  if (!rawUrl) {
+    url = 'https://mrbit.ro/en';
+  } else if (rawUrl.startsWith('http')) {
+    url = rawUrl;
+  } else {
+    // ensure leading slash
+    url = 'https://mrbit.ro' + (rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl);
+  }
   _previewUrl = url;
 
   // Update header
