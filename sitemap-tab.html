@@ -298,6 +298,24 @@
     border: 1px solid #2a2a4a;
   }
   .preview-blocked-msg a { color:#7070d0; text-decoration:none; }
+  .preview-blocked-msg .blk-ext-icon { font-size:36px; margin-bottom:10px; display:block; }
+  .preview-blocked-msg .blk-ext-title { font-size:13px; font-weight:700; color:#a0a0cc; margin-bottom:8px; display:block; }
+  .preview-blocked-msg .blk-ext-steps { text-align:left; display:inline-block; margin:10px 0; color:#7070a0; }
+  .preview-blocked-msg .blk-ext-steps li { margin-bottom:4px; }
+  .preview-ss-loading {
+    width:390px; padding:40px 20px; text-align:center;
+    color:#5050a0; font-size:12px;
+    background:#12122a; border-radius:12px;
+    border: 1px solid #2a2a4a;
+    display:none;
+  }
+  .preview-ss-loading .ss-spinner {
+    width:28px; height:28px; border:3px solid #2a2a4a;
+    border-top-color:#7070d0; border-radius:50%;
+    animation: spin 0.8s linear infinite;
+    margin:0 auto 12px;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .preview-size-badge {
     position:absolute; bottom:6px; right:6px;
     font-size:9px; color:#4040a0; font-family:monospace;
@@ -511,15 +529,18 @@
     <!-- Screenshot tab -->
     <div id="preview-ss-wrap" style="display:none">
       <div style="position:relative">
-        <div class="preview-ss-img">
-          <img id="preview-ss-img" src="" alt="Loading screenshot…"
+        <div class="preview-ss-img" id="preview-ss-img-wrap">
+          <img id="preview-ss-img" src="" alt=""
             onerror="onSsImgError()">
         </div>
         <div class="preview-size-badge">390 px wide</div>
-        <div class="preview-blocked-msg" style="display:none">
+        <div class="preview-ss-loading" id="preview-ss-loading">
+          <div class="ss-spinner"></div>
+          <div id="preview-ss-loading-text">Opening page in browser…</div>
+        </div>
+        <div class="preview-blocked-msg" id="preview-ss-blocked" style="display:none">
           Screenshot unavailable.<br>
-          <a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a> and use<br>
-          DevTools → Toggle device toolbar → 390px.
+          <a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>
         </div>
       </div>
     </div>
@@ -1227,28 +1248,70 @@ function ctxConnectFrom(){
 // ============================================================
 let _previewUrl = '';
 
-// Screenshot fallback services (tried in order on error)
-// microlink.io uses a real Chromium browser — best at bypassing Cloudflare bot protection
-// thum.io and mshots are lightweight alternatives
-const SS_SERVICES = [
-  u => `https://api.microlink.io/?url=${encodeURIComponent(u)}&screenshot=true&meta=false&embed=screenshot.url`,
-  u => `https://image.thum.io/get/width/390/crop/844/noanimate/${encodeURIComponent(u)}`,
-  u => `https://s0.wp.com/mshots/v1/${encodeURIComponent(u)}?w=390&h=844`,
-];
-let _ssUrl = '', _ssSvcIdx = 0;
+// ── Chrome Extension screenshot bridge ────────────────────────────────────
+// The extension (mrbit-screenshot-extension) takes screenshots using the user's
+// own Chrome browser — same Cato VPN IP, same cookies, no bot-blocking.
+let _mrbitExtReady = false;
+
+window.addEventListener('mrbit-ext-ready', () => { _mrbitExtReady = true; });
+
+// Ping the extension on load (handles race condition if content script was already injected)
+window.dispatchEvent(new CustomEvent('mrbit-ext-ping'));
+
+function takeExtScreenshot(url) {
+  return new Promise((resolve, reject) => {
+    const id = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      window.removeEventListener('mrbit-ext-result', handler);
+      reject(new Error('Screenshot timed out after 30s'));
+    }, 30000);
+
+    function handler(e) {
+      if (e.detail.id !== id) return;
+      window.removeEventListener('mrbit-ext-result', handler);
+      clearTimeout(timer);
+      if (e.detail.ok) resolve(e.detail.dataUrl);
+      else reject(new Error(e.detail.error || 'Unknown error'));
+    }
+
+    window.addEventListener('mrbit-ext-result', handler);
+    window.dispatchEvent(new CustomEvent('mrbit-ext-screenshot', { detail: { url, id } }));
+  });
+}
+
+// Helpers to show/hide screenshot UI states
+function _ssShowLoading(text) {
+  document.getElementById('preview-ss-img-wrap').style.display   = 'none';
+  document.getElementById('preview-ss-blocked').style.display    = 'none';
+  const el = document.getElementById('preview-ss-loading');
+  document.getElementById('preview-ss-loading-text').textContent = text || 'Opening page in browser…';
+  el.style.display = '';
+}
+function _ssShowImage(dataUrl) {
+  document.getElementById('preview-ss-loading').style.display  = 'none';
+  document.getElementById('preview-ss-blocked').style.display  = 'none';
+  const wrap = document.getElementById('preview-ss-img-wrap');
+  wrap.style.display = '';
+  const img = document.getElementById('preview-ss-img');
+  img.src = dataUrl;
+}
+function _ssShowBlocked(html) {
+  document.getElementById('preview-ss-loading').style.display  = 'none';
+  document.getElementById('preview-ss-img-wrap').style.display = 'none';
+  const el = document.getElementById('preview-ss-blocked');
+  el.innerHTML = html;
+  el.style.display = '';
+}
+
+let _ssUrl = '', _ssCurrentUrl = '';
 
 function onSsImgError() {
-  const img = document.getElementById('preview-ss-img');
-  if (_ssSvcIdx < SS_SERVICES.length) {
-    img.src = SS_SERVICES[_ssSvcIdx++](_ssUrl);
-    return;
-  }
-  // All services failed — show blocked message
-  img.parentElement.style.display = 'none';
-  // img.parentElement = .preview-ss-img (B)
-  // B.nextSibling = .preview-size-badge
-  // B.nextSibling.nextSibling = .preview-blocked-msg
-  img.parentElement.nextElementSibling.nextElementSibling.style.display = '';
+  // Called if the <img> src fails to load (shouldn't happen with extension,
+  // but kept as a fallback for robustness)
+  _ssShowBlocked(
+    'Screenshot unavailable.<br>' +
+    '<a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>'
+  );
 }
 
 function onIframeLoad() {
@@ -1317,18 +1380,48 @@ function goToScreenshots(){
   if (liveBlocked) liveBlocked.style.display = 'none';
   iframe.src = url;
 
-  // Load screenshot — reset state and try services in order
+  // Load screenshot via extension (uses user's real browser / Cato IP)
   _ssUrl = url;
-  _ssSvcIdx = 0;
-  const ssImg = document.getElementById('preview-ss-img');
-  ssImg.parentElement.style.display = '';  // show img container
-  // Hide blocked-msg: it's B.nextSibling.nextSibling
-  ssImg.parentElement.nextElementSibling.nextElementSibling.style.display = 'none';
-  ssImg.src = '';  // clear first so onerror fires reliably when set below
-  // Small delay so we don't spam the service on fast node switching
+  _ssCurrentUrl = url;
   clearTimeout(goToScreenshots._ssTimer);
-  goToScreenshots._ssTimer = setTimeout(()=>{
-    ssImg.src = SS_SERVICES[_ssSvcIdx++](_ssUrl);
+  goToScreenshots._ssTimer = setTimeout(async () => {
+    if (url !== _ssCurrentUrl) return; // switched to another node, abort
+
+    if (_mrbitExtReady) {
+      // Extension is installed — use it
+      _ssShowLoading('Opening page in browser…');
+      setTimeout(() => {
+        if (url === _ssCurrentUrl) {
+          document.getElementById('preview-ss-loading-text').textContent = 'Taking screenshot…';
+        }
+      }, 1500);
+      try {
+        const dataUrl = await takeExtScreenshot(url);
+        if (url !== _ssCurrentUrl) return; // stale, user moved on
+        _ssShowImage(dataUrl);
+      } catch (err) {
+        if (url !== _ssCurrentUrl) return;
+        _ssShowBlocked(
+          '⚠️ Screenshot failed.<br>' +
+          '<small style="color:#4040a0">' + (err.message || '') + '</small><br><br>' +
+          '<a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>'
+        );
+      }
+    } else {
+      // Extension not installed — show install instructions
+      _ssShowBlocked(
+        '<span class="blk-ext-icon">🔌</span>' +
+        '<span class="blk-ext-title">Extension not installed</span>' +
+        'To enable screenshots, install the <b>MrBit Screenshot Helper</b>:<br><br>' +
+        '<ol class="blk-ext-steps">' +
+        '<li>Open <b>chrome://extensions</b></li>' +
+        '<li>Enable <b>Developer mode</b> (top right)</li>' +
+        '<li>Click <b>Load unpacked</b></li>' +
+        '<li>Select the <b>mrbit-screenshot-extension</b> folder</li>' +
+        '<li>Reload this page</li>' +
+        '</ol>'
+      );
+    }
   }, 300);
 
   // Close editor, open preview — default to Screenshot tab
