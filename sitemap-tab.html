@@ -1214,9 +1214,13 @@ function goToScreenshots(){
   if (!rawUrl) {
     url = 'https://mrbit.ro/en';
   } else if (rawUrl.startsWith('http')) {
+    // already a full URL
     url = rawUrl;
+  } else if (!rawUrl.startsWith('/') && /^[a-z0-9.-]+\.[a-z]{2,}/i.test(rawUrl)) {
+    // domain-style like 'mrbit.ro/en' — add protocol
+    url = 'https://' + rawUrl;
   } else {
-    // ensure leading slash
+    // path-style like '/en/games/live' — prepend base
     url = 'https://mrbit.ro' + (rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl);
   }
   _previewUrl = url;
