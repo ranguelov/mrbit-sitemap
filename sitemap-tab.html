@@ -477,9 +477,15 @@
       <div style="position:relative">
         <div class="preview-phone">
           <iframe id="preview-iframe" src="about:blank" scrolling="yes"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            onload="onIframeLoad()"></iframe>
         </div>
         <div class="preview-size-badge">390 × 844 px</div>
+        <div class="preview-blocked-msg" id="preview-live-blocked" style="display:none">
+          ⚠️ Live preview is blocked by the site<br>
+          (X-Frame-Options / CSP).<br>
+          <a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>
+        </div>
       </div>
     </div>
     <!-- Screenshot tab -->
@@ -487,7 +493,7 @@
       <div style="position:relative">
         <div class="preview-ss-img">
           <img id="preview-ss-img" src="" alt="Loading screenshot…"
-            onerror="this.parentElement.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">
+            onerror="onSsImgError()">
         </div>
         <div class="preview-size-badge">390 px wide</div>
         <div class="preview-blocked-msg" style="display:none">
@@ -821,7 +827,7 @@ function applyTransform() {
 function renderAll() {
   canvasEl.querySelectorAll('.node').forEach(n=>n.remove());
   nodes.forEach(n => createNodeEl(n));
-  renderEdges(); // immediate pass (offsetHeight may be 0 for brand-new nodes)
+  renderEdges(); // immediate pass (offsetHeight may be 0 for new nodes)
   requestAnimationFrame(renderEdges); // second pass after browser layout
 }
 
@@ -873,7 +879,7 @@ function renderEdges() {
   svgEl.innerHTML = '';
   const defs = svgNS('defs');
 
-  // Arrow markers — fixed pixel size (markerUnits=userSpaceOnUse) so they stay 8px at any zoom
+  // Arrow markers — userSpaceOnUse so they stay 8px regardless of zoom
   function makeMarker(id, color) {
     const mk = svgNS('marker');
     mk.setAttribute('id', id);
@@ -891,7 +897,7 @@ function renderEdges() {
 
   svgEl.appendChild(defs);
 
-  // Canvas-space → viewport-space (SVG has no CSS transform — coordinates are absolute)
+  // Canvas-space → viewport-space (SVG has no CSS transform of its own)
   const vx = cx => tx + cx * scale;
   const vy = cy => ty + cy * scale;
 
@@ -1201,6 +1207,49 @@ function ctxConnectFrom(){
 // ============================================================
 let _previewUrl = '';
 
+// Screenshot fallback services (tried in order on error)
+const SS_SERVICES = [
+  u => `https://image.thum.io/get/width/390/crop/844/noanimate/${encodeURIComponent(u)}`,
+  u => `https://s0.wp.com/mshots/v1/${encodeURIComponent(u)}?w=390&h=844`,
+];
+let _ssUrl = '', _ssSvcIdx = 0;
+
+function onSsImgError() {
+  const img = document.getElementById('preview-ss-img');
+  if (_ssSvcIdx < SS_SERVICES.length) {
+    img.src = SS_SERVICES[_ssSvcIdx++](_ssUrl);
+    return;
+  }
+  // All services failed — show blocked message
+  img.parentElement.style.display = 'none';
+  // img.parentElement = .preview-ss-img (B)
+  // B.nextSibling = .preview-size-badge
+  // B.nextSibling.nextSibling = .preview-blocked-msg
+  img.parentElement.nextElementSibling.nextElementSibling.style.display = '';
+}
+
+function onIframeLoad() {
+  // mrbit.ro blocks iframe embedding via X-Frame-Options
+  // Browser renders its own error page — detect it by trying to access contentDocument
+  const iframe = document.getElementById('preview-iframe');
+  const liveBlocked = document.getElementById('preview-live-blocked');
+  if (!liveBlocked) return;
+  try {
+    // If cross-origin block: contentDocument is null or accessing it throws
+    const doc = iframe.contentDocument;
+    if (!doc || doc.location.href === 'about:blank') {
+      // Still loading or blank — do nothing yet
+      return;
+    }
+    // Accessible — no X-Frame block (unlikely for mrbit.ro but handle it)
+    liveBlocked.style.display = 'none';
+  } catch(e) {
+    // SecurityError = cross-origin loaded = site is reachable but blocked embedding
+    // Show the blocked notice
+    liveBlocked.style.display = '';
+  }
+}
+
 function goToScreenshots(){
   if(!selectedNodeId)return;
   const n=nodes.find(x=>x.id===selectedNodeId); if(!n)return;
@@ -1225,24 +1274,29 @@ function goToScreenshots(){
   document.getElementById('preview-panel-title').textContent = n.title || 'Preview';
   document.getElementById('preview-panel-url').textContent   = n.url   || '/en';
 
-  // Load iframe (live page)
+  // Load iframe (live page) — reset blocked notice first
   const iframe = document.getElementById('preview-iframe');
+  const liveBlocked = document.getElementById('preview-live-blocked');
+  if (liveBlocked) liveBlocked.style.display = 'none';
   iframe.src = url;
 
-  // Load screenshot via thum.io (free, no API key needed, 390px wide)
+  // Load screenshot — reset state and try services in order
+  _ssUrl = url;
+  _ssSvcIdx = 0;
   const ssImg = document.getElementById('preview-ss-img');
-  ssImg.src = '';  // reset to retrigger onerror if needed
-  ssImg.parentElement.style.display = '';
-  ssImg.parentElement.nextElementSibling.style.display = 'none';
+  ssImg.parentElement.style.display = '';  // show img container
+  // Hide blocked-msg: it's B.nextSibling.nextSibling
+  ssImg.parentElement.nextElementSibling.nextElementSibling.style.display = 'none';
+  ssImg.src = '';  // clear first so onerror fires reliably when set below
   // Small delay so we don't spam the service on fast node switching
   clearTimeout(goToScreenshots._ssTimer);
   goToScreenshots._ssTimer = setTimeout(()=>{
-    ssImg.src = `https://image.thum.io/get/width/390/crop/844/noanimate/${encodeURIComponent(url)}`;
+    ssImg.src = SS_SERVICES[_ssSvcIdx++](_ssUrl);
   }, 300);
 
-  // Close editor, open preview
+  // Close editor, open preview — default to Screenshot tab
   editorPanel.classList.remove('visible');
-  switchPreviewTab('live');
+  switchPreviewTab('ss');
   document.getElementById('preview-panel').classList.add('visible');
 }
 
