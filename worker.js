@@ -208,6 +208,85 @@ const HTML = `<!DOCTYPE html>
   .btn-delete-node { padding: 6px 9px; background: #3a1a1a; border: 1px solid #6a2a2a; border-radius: 6px; color: #e06060; font-size: 11px; cursor: pointer; transition: all 0.15s; }
   .btn-delete-node:hover { background: #4a2a2a; }
 
+  /* ── MOBILE PREVIEW PANEL ── */
+  #preview-panel {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: 430px;
+    background: #0e0e22;
+    border-left: 2px solid #3a3a6a;
+    z-index: 160;
+    display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(.4,0,.2,1);
+    box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+  }
+  #preview-panel.visible { transform: translateX(0); }
+  .preview-hdr {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: #12122a;
+    border-bottom: 1px solid #2a2a4a;
+    flex-shrink: 0;
+  }
+  .preview-hdr-info { flex:1; min-width: 0; }
+  .preview-hdr-title { font-size:12px; font-weight:700; color:#c0c0f0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .preview-hdr-url { font-size:9px; color:#5050a0; font-family:monospace;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .preview-action-btn {
+    padding: 4px 7px; border-radius:5px; border:1px solid #3a3a5a;
+    background:#1e1e3a; color:#9090c0; font-size:11px; cursor:pointer;
+    transition: all 0.12s; white-space:nowrap; flex-shrink:0;
+  }
+  .preview-action-btn:hover { background:#2a2a5a; color:#c0c0ff; border-color:#6060a0; }
+  .preview-tabs {
+    display:flex; gap:0;
+    border-bottom: 1px solid #2a2a4a;
+    flex-shrink: 0;
+  }
+  .preview-tab {
+    flex:1; padding:6px 4px; font-size:10px; border:none;
+    background:#12122a; color:#6060a0; cursor:pointer;
+    border-bottom:2px solid transparent; transition: all 0.12s;
+  }
+  .preview-tab.active { color:#a0a0ff; border-bottom-color:#6060cc; background:#16163a; }
+  .preview-tab:hover:not(.active) { color:#9090c0; background:#14143a; }
+  .preview-scroll {
+    flex:1; overflow-y:auto; overflow-x:hidden;
+    background:#07071a;
+    display:flex; align-items:flex-start; justify-content:center;
+    padding:12px 0 16px;
+  }
+  .preview-phone {
+    width:390px; flex-shrink:0;
+    border-radius:16px;
+    overflow:hidden;
+    box-shadow: 0 0 0 2px #3a3a6a, 0 12px 48px rgba(0,0,0,0.7);
+  }
+  .preview-phone iframe {
+    display:block; width:390px; height:844px; border:none;
+    background:#fff;
+  }
+  .preview-ss-img {
+    display:block; width:390px; border-radius:16px;
+    overflow:hidden;
+    box-shadow: 0 0 0 2px #3a3a6a, 0 12px 48px rgba(0,0,0,0.7);
+  }
+  .preview-ss-img img { display:block; width:100%; min-height:80px; background:#1e1e3a; }
+  .preview-blocked-msg {
+    width:390px; padding:30px 20px; text-align:center;
+    color:#5050a0; font-size:12px; line-height:1.7;
+    background:#12122a; border-radius:12px;
+    border: 1px solid #2a2a4a;
+  }
+  .preview-blocked-msg a { color:#7070d0; text-decoration:none; }
+  .preview-size-badge {
+    position:absolute; bottom:6px; right:6px;
+    font-size:9px; color:#4040a0; font-family:monospace;
+    background:#0a0a1a; padding:2px 6px; border-radius:4px;
+    border:1px solid #2a2a4a;
+  }
+
   /* ── LEGEND ── */
   .legend {
     position: absolute; left: 12px; bottom: 12px;
@@ -372,6 +451,50 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- MOBILE PREVIEW PANEL -->
+<div id="preview-panel">
+  <div class="preview-hdr">
+    <button class="preview-action-btn" onclick="closePreview()" title="Back to editor">← Back</button>
+    <div class="preview-hdr-info">
+      <div class="preview-hdr-title" id="preview-panel-title">Preview</div>
+      <div class="preview-hdr-url" id="preview-panel-url"></div>
+    </div>
+    <button class="preview-action-btn" onclick="openPreviewPopup()" title="Open in 390px popup">📱</button>
+    <button class="preview-action-btn" onclick="openPreviewNewTab()" title="Open in new tab">↗</button>
+  </div>
+  <div class="preview-tabs">
+    <button class="preview-tab active" id="ptab-live" onclick="switchPreviewTab('live')">📺 Live Page</button>
+    <button class="preview-tab" id="ptab-ss" onclick="switchPreviewTab('ss')">📸 Screenshot</button>
+  </div>
+  <div class="preview-scroll" id="preview-scroll">
+    <!-- Live tab -->
+    <div id="preview-live-wrap">
+      <div style="position:relative">
+        <div class="preview-phone">
+          <iframe id="preview-iframe" src="about:blank" scrolling="yes"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        </div>
+        <div class="preview-size-badge">390 × 844 px</div>
+      </div>
+    </div>
+    <!-- Screenshot tab -->
+    <div id="preview-ss-wrap" style="display:none">
+      <div style="position:relative">
+        <div class="preview-ss-img">
+          <img id="preview-ss-img" src="" alt="Loading screenshot…"
+            onerror="this.parentElement.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">
+        </div>
+        <div class="preview-size-badge">390 px wide</div>
+        <div class="preview-blocked-msg" style="display:none">
+          Screenshot unavailable.<br>
+          <a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a> and use<br>
+          DevTools → Toggle device toolbar → 390px.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 // ============================================================
@@ -561,9 +684,9 @@ let nodeCounter = Date.now();
 // PERSIST  (v7 — hierarchical layout)
 // ============================================================
 const STORAGE_VER = 'v7';
-const SK_NODES = \`sitemap_mrbit_\${STORAGE_VER}_nodes\`;
-const SK_EDGES = \`sitemap_mrbit_\${STORAGE_VER}_edges\`;
-const SK_VIEW  = \`sitemap_mrbit_\${STORAGE_VER}_view\`;
+const SK_NODES = `sitemap_mrbit_\${STORAGE_VER}_nodes`;
+const SK_EDGES = `sitemap_mrbit_\${STORAGE_VER}_edges`;
+const SK_VIEW  = `sitemap_mrbit_\${STORAGE_VER}_view`;
 
 function save() {
   try {
@@ -684,7 +807,7 @@ function autoLayout() {
 // RENDER
 // ============================================================
 function applyTransform() {
-  const t = \`translate(\${tx}px,\${ty}px) scale(\${scale})\`;
+  const t = `translate(\${tx}px,\${ty}px) scale(\${scale})`;
   canvasEl.style.transform = t;
   canvasEl.style.transformOrigin = '0 0';
   // SVG follows the same transform so arrow paths (in canvas-space) render correctly
@@ -703,24 +826,24 @@ function renderAll() {
 
 function createNodeEl(node) {
   const el = document.createElement('div');
-  el.className = \`node node-\${node.type}\`;
-  el.id = \`node-\${node.id}\`;
+  el.className = `node node-\${node.type}`;
+  el.id = `node-\${node.id}`;
   el.style.left = node.x+'px';
   el.style.top  = node.y+'px';
 
   if (selectedNodeId===node.id)    el.classList.add('selected');
   if (connectMode && connectSourceId===node.id) el.classList.add('connecting-source');
 
-  el.innerHTML = \`
+  el.innerHTML = `
     <div class="node-inner">
       <span class="node-type-label">\${{section:'Section',page:'Page',state:'State'}[node.type]}</span>
       <span class="node-title">\${escHtml(node.title||'Untitled')}</span>
-      \${node.url   ? \`<span class="node-url">\${escHtml(node.url)}</span>\` : ''}
-      \${node.notes ? \`<span class="node-badge">🏷 \${escHtml(node.notes)}</span>\` : ''}
-      \${node.screenshotCount ? \`<span class="node-screenshots-count">📸 \${node.screenshotCount} screenshots</span>\` : ''}
+      \${node.url   ? `<span class="node-url">\${escHtml(node.url)}</span>` : ''}
+      \${node.notes ? `<span class="node-badge">🏷 \${escHtml(node.notes)}</span>` : ''}
+      \${node.screenshotCount ? `<span class="node-screenshots-count">📸 \${node.screenshotCount} screenshots</span>` : ''}
     </div>
     <div class="connect-handle" data-id="\${node.id}"></div>
-  \`;
+  `;
 
   el.addEventListener('mousedown', onNodeMouseDown);
   el.addEventListener('click', e => {
@@ -773,8 +896,8 @@ function renderEdges() {
   svgEl.appendChild(defs);
 
   edges.forEach(edge => {
-    const fEl = document.getElementById(\`node-\${edge.from}\`);
-    const tEl = document.getElementById(\`node-\${edge.to}\`);
+    const fEl = document.getElementById(`node-\${edge.from}`);
+    const tEl = document.getElementById(`node-\${edge.to}`);
     if (!fEl || !tEl) return;
 
     const fn = nodes.find(n => n.id === edge.from);
@@ -799,7 +922,7 @@ function renderEdges() {
       tx2 = tn.x;
       ty2 = tn.y + tH / 2;
       const tension = Math.max(Math.abs(dx) * 0.4, 20);
-      d = \`M\${sx},\${sy} C\${sx+tension},\${sy} \${tx2-tension},\${ty2} \${tx2},\${ty2}\`;
+      d = `M\${sx},\${sy} C\${sx+tension},\${sy} \${tx2-tension},\${ty2} \${tx2},\${ty2}`;
     } else {
       // ── Vertical / diagonal connection: exit bottom-center, enter top-center
       sx  = fn.x + fW / 2;
@@ -807,7 +930,7 @@ function renderEdges() {
       tx2 = tn.x + tW / 2;
       ty2 = tn.y;
       const tension = Math.max(Math.abs(dy) * 0.42, 24);
-      d = \`M\${sx},\${sy} C\${sx},\${sy+tension} \${tx2},\${ty2-tension} \${tx2},\${ty2}\`;
+      d = `M\${sx},\${sy} C\${sx},\${sy+tension} \${tx2},\${ty2-tension} \${tx2},\${ty2}`;
     }
 
     const line = svgNS('path');
@@ -868,16 +991,16 @@ function updateNodeFromEditor(){
   n.url   = document.getElementById('edit-url').value;
   n.notes = document.getElementById('edit-notes').value;
   n.desc  = document.getElementById('edit-desc').value;
-  const el=document.getElementById(\`node-\${n.id}\`);
+  const el=document.getElementById(`node-\${n.id}`);
   if(el){
-    el.className=\`node node-\${n.type} selected\`;
+    el.className=`node node-\${n.type} selected`;
     // Rebuild full inner content so url, notes, badge all update live
     el.querySelector('.node-inner').innerHTML =
-      \`<span class="node-type-label">\${{section:'Section',page:'Page',state:'State'}[n.type]}</span>\`+
-      \`<span class="node-title">\${escHtml(n.title||'Untitled')}</span>\`+
-      (n.url   ? \`<span class="node-url">\${escHtml(n.url)}</span>\` : '')+
-      (n.notes ? \`<span class="node-badge">🏷 \${escHtml(n.notes)}</span>\` : '')+
-      (n.screenshotCount ? \`<span class="node-screenshots-count">📸 \${n.screenshotCount}</span>\` : '');
+      `<span class="node-type-label">\${{section:'Section',page:'Page',state:'State'}[n.type]}</span>`+
+      `<span class="node-title">\${escHtml(n.title||'Untitled')}</span>`+
+      (n.url   ? `<span class="node-url">\${escHtml(n.url)}</span>` : '')+
+      (n.notes ? `<span class="node-badge">🏷 \${escHtml(n.notes)}</span>` : '')+
+      (n.screenshotCount ? `<span class="node-screenshots-count">📸 \${n.screenshotCount}</span>` : '');
   }
   save();
 }
@@ -912,7 +1035,7 @@ document.addEventListener('mousemove',e=>{
     const n=nodes.find(x=>x.id===dragging.nodeId); if(!n)return;
     n.x=dragging.origX+(e.clientX-dragging.startX)/scale;
     n.y=dragging.origY+(e.clientY-dragging.startY)/scale;
-    const el=document.getElementById(\`node-\${n.id}\`);
+    const el=document.getElementById(`node-\${n.id}`);
     if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}
     renderEdges(); return;
   }
@@ -1078,25 +1201,78 @@ function ctxConnectFrom(){
 }
 
 // ============================================================
-// GO TO SCREENSHOTS
+// MOBILE PREVIEW PANEL (390px)
 // ============================================================
+let _previewUrl = '';
+
 function goToScreenshots(){
   if(!selectedNodeId)return;
   const n=nodes.find(x=>x.id===selectedNodeId); if(!n)return;
-  const filter=n.url||n.title||'';
-  window.dispatchEvent(new CustomEvent('sitemap:openScreenshots',{
-    detail:{nodeId:n.id,filter,type:n.type,title:n.title,url:n.url}
-  }));
-  showToast(\`Opening screenshots: "\${n.title||'node'}"…\`);
-  console.log('[SiteMap → Screenshots]',{nodeId:n.id,filter,title:n.title,url:n.url});
+
+  const url = n.url ? 'https://mrbit.ro'+n.url : 'https://mrbit.ro/en';
+  _previewUrl = url;
+
+  // Update header
+  document.getElementById('preview-panel-title').textContent = n.title || 'Preview';
+  document.getElementById('preview-panel-url').textContent   = n.url   || '/en';
+
+  // Load iframe (live page)
+  const iframe = document.getElementById('preview-iframe');
+  iframe.src = url;
+
+  // Load screenshot via thum.io (free, no API key needed, 390px wide)
+  const ssImg = document.getElementById('preview-ss-img');
+  ssImg.src = '';  // reset to retrigger onerror if needed
+  ssImg.parentElement.style.display = '';
+  ssImg.parentElement.nextElementSibling.style.display = 'none';
+  // Small delay so we don't spam the service on fast node switching
+  clearTimeout(goToScreenshots._ssTimer);
+  goToScreenshots._ssTimer = setTimeout(()=>{
+    ssImg.src = `https://image.thum.io/get/width/390/crop/844/noanimate/\${encodeURIComponent(url)}`;
+  }, 300);
+
+  // Close editor, open preview
+  editorPanel.classList.remove('visible');
+  switchPreviewTab('live');
+  document.getElementById('preview-panel').classList.add('visible');
 }
 
-// Receive screenshot count updates from parent app
-window.addEventListener('screenshots:nodeCount',e=>{
-  const{nodeId,count}=e.detail;
-  const n=nodes.find(x=>x.id===nodeId);
-  if(n){n.screenshotCount=count;renderAll();}
-});
+function closePreview(){
+  document.getElementById('preview-panel').classList.remove('visible');
+  // Stop loading iframe to save bandwidth
+  setTimeout(()=>{ document.getElementById('preview-iframe').src='about:blank'; },300);
+  // Reopen editor if a node is selected
+  if(selectedNodeId){
+    openEditor(selectedNodeId);
+  }
+}
+
+function openPreviewPopup(){
+  if(!_previewUrl)return;
+  const w=430, h=900;
+  const l=Math.max(0,Math.round((screen.width-w)/2));
+  const t=Math.max(0,Math.round((screen.height-h)/2));
+  window.open(_previewUrl,'mrbit_mobile_preview',
+    `width=\${w},height=\${h},left=\${l},top=\${t},resizable=yes,scrollbars=yes,menubar=no,toolbar=no,location=no`);
+}
+
+function openPreviewNewTab(){
+  if(_previewUrl) window.open(_previewUrl,'_blank');
+}
+
+function switchPreviewTab(tab){
+  const live = document.getElementById('preview-live-wrap');
+  const ss   = document.getElementById('preview-ss-wrap');
+  const tLive= document.getElementById('ptab-live');
+  const tSs  = document.getElementById('ptab-ss');
+  if(tab==='live'){
+    live.style.display=''; ss.style.display='none';
+    tLive.classList.add('active'); tSs.classList.remove('active');
+  } else {
+    live.style.display='none'; ss.style.display='';
+    tLive.classList.remove('active'); tSs.classList.add('active');
+  }
+}
 
 // ============================================================
 // KEYBOARD
@@ -1118,7 +1294,10 @@ document.addEventListener('keydown',e=>{
     connectMode=false;connectSourceId=null;
     document.getElementById('btn-connect').classList.remove('active');
     canvasWrapper.classList.remove('connecting');
-    if(editorPanel.classList.contains('visible')){
+    const previewPanel=document.getElementById('preview-panel');
+    if(previewPanel.classList.contains('visible')){
+      closePreview(); // closes preview, reopens editor if selected
+    } else if(editorPanel.classList.contains('visible')){
       closeEditor(); // closeEditor calls renderAll internally
     } else {
       renderAll();
@@ -1181,7 +1360,7 @@ if (!hadSaved || nodes.length === 0) {
   nodeCounter = Date.now();
   autoLayout();   // will also save + fit
 } else {
-  nodeCounter = Math.max(...nodes.map(n=>parseInt(n.id.replace(/\D/g,''))||0), Date.now());
+  nodeCounter = Math.max(...nodes.map(n=>parseInt(n.id.replace(/\\D/g,''))||0), Date.now());
   renderAll();
   applyTransform();
   setTimeout(fitToScreen, 80);
@@ -1190,11 +1369,8 @@ if (!hadSaved || nodes.length === 0) {
 </body>
 </html>
 `;
-
 export default {
   async fetch(request) {
-    const url = new URL(request.url);
-    // Serve the single-page app for all routes
     return new Response(HTML, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
