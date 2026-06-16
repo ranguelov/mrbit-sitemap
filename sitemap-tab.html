@@ -261,8 +261,26 @@
     width:390px; flex-shrink:0;
     border-radius:16px;
     overflow:hidden;
+    position:relative;
     box-shadow: 0 0 0 2px #3a3a6a, 0 12px 48px rgba(0,0,0,0.7);
   }
+  /* Live Page blocked overlay — shown inside the phone frame */
+  #preview-live-blocked {
+    position:absolute; inset:0; z-index:5;
+    background:#f8f9ff;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    text-align:center; padding:28px;
+  }
+  #preview-live-blocked .blk-icon { font-size:48px; margin-bottom:14px; }
+  #preview-live-blocked .blk-title { font-size:15px; font-weight:700; color:#1a1a3a; margin-bottom:8px; }
+  #preview-live-blocked .blk-desc  { font-size:12px; color:#666; line-height:1.6; margin-bottom:20px; }
+  #preview-live-blocked .blk-btn   {
+    display:inline-block; background:#5050c0; color:#fff;
+    padding:10px 22px; border-radius:8px;
+    text-decoration:none; font-size:13px; font-weight:600;
+  }
+  #preview-live-blocked .blk-btn:hover { background:#6060d0; }
   .preview-phone iframe {
     display:block; width:390px; height:844px; border:none;
     background:#fff;
@@ -479,13 +497,15 @@
           <iframe id="preview-iframe" src="about:blank" scrolling="yes"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             onload="onIframeLoad()"></iframe>
+          <!-- Blocked overlay — absolute inside phone frame, hidden by default -->
+          <div id="preview-live-blocked" style="display:none">
+            <div class="blk-icon">🚫</div>
+            <div class="blk-title">Live preview blocked</div>
+            <div class="blk-desc">mrbit.ro doesn't allow embedding in iframes<br>(X-Frame-Options / CSP)</div>
+            <a class="blk-btn" href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>
+          </div>
         </div>
         <div class="preview-size-badge">390 × 844 px</div>
-        <div class="preview-blocked-msg" id="preview-live-blocked" style="display:none">
-          ⚠️ Live preview is blocked by the site<br>
-          (X-Frame-Options / CSP).<br>
-          <a href="#" onclick="openPreviewNewTab();return false">Open page in new tab ↗</a>
-        </div>
       </div>
     </div>
     <!-- Screenshot tab -->
@@ -1208,7 +1228,10 @@ function ctxConnectFrom(){
 let _previewUrl = '';
 
 // Screenshot fallback services (tried in order on error)
+// microlink.io uses a real Chromium browser — best at bypassing Cloudflare bot protection
+// thum.io and mshots are lightweight alternatives
 const SS_SERVICES = [
+  u => `https://api.microlink.io/?url=${encodeURIComponent(u)}&screenshot=true&meta=false&embed=screenshot.url`,
   u => `https://image.thum.io/get/width/390/crop/844/noanimate/${encodeURIComponent(u)}`,
   u => `https://s0.wp.com/mshots/v1/${encodeURIComponent(u)}?w=390&h=844`,
 ];
@@ -1229,25 +1252,37 @@ function onSsImgError() {
 }
 
 function onIframeLoad() {
-  // mrbit.ro blocks iframe embedding via X-Frame-Options
   const iframe = document.getElementById('preview-iframe');
   const liveBlocked = document.getElementById('preview-live-blocked');
   if (!liveBlocked) return;
-  // Skip the initial empty iframe (no src set yet)
+  // Skip the initial empty iframe before any URL is set
   const src = iframe.getAttribute('src') || '';
   if (!src || src === 'about:blank') return;
+
+  let isBlocked = false;
   try {
     const doc = iframe.contentDocument;
-    if (!doc || doc.location.href === 'about:blank' || doc.location.href === '') {
-      // Chrome behaviour: X-Frame-Options blocked → iframe stays about:blank despite having a src
-      liveBlocked.style.display = '';
+    if (!doc) {
+      isBlocked = true;
     } else {
-      // Page actually loaded into iframe (no X-Frame block)
-      liveBlocked.style.display = 'none';
+      const href = doc.location.href;
+      // about:blank after real URL set = X-Frame-Options blocked (Chrome behaviour)
+      // chrome-error:// = Chrome's "refused to connect" error page
+      isBlocked = !href || href === '' || href === 'about:blank'
+               || href.startsWith('chrome-error://')
+               || href.startsWith('chrome://');
     }
   } catch(e) {
-    // SecurityError (Firefox/Safari) = cross-origin blocked
-    liveBlocked.style.display = '';
+    // SecurityError = page loaded cross-origin successfully → NOT blocked
+    isBlocked = false;
+  }
+
+  if (isBlocked) {
+    iframe.style.display = 'none';    // Hide Chrome's ugly error page
+    liveBlocked.style.display = '';   // Show our friendly overlay
+  } else {
+    iframe.style.display = '';
+    liveBlocked.style.display = 'none';
   }
 }
 
@@ -1275,9 +1310,10 @@ function goToScreenshots(){
   document.getElementById('preview-panel-title').textContent = n.title || 'Preview';
   document.getElementById('preview-panel-url').textContent   = n.url   || '/en';
 
-  // Load iframe (live page) — reset blocked notice first
+  // Load iframe (live page) — reset state before loading
   const iframe = document.getElementById('preview-iframe');
   const liveBlocked = document.getElementById('preview-live-blocked');
+  iframe.style.display = '';          // Ensure iframe is visible while loading
   if (liveBlocked) liveBlocked.style.display = 'none';
   iframe.src = url;
 
