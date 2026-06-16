@@ -348,9 +348,13 @@
   </button>
 
   <button class="tool-btn" id="btn-pan" onclick="togglePanMode()" title="Pan mode [Space+drag or middle mouse]">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M8 2v12M2 8h12"/>
-      <path d="M5.5 4.5L8 2l2.5 2.5M5.5 11.5L8 14l2.5-2.5M4.5 5.5L2 8l2.5 2.5M11.5 5.5L14 8l-2.5 2.5"/>
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.5 7V3a1 1 0 0 1 2 0v4"/>
+      <path d="M7.5 6V2.5a1 1 0 0 1 2 0V6"/>
+      <path d="M9.5 6a1 1 0 0 1 2 0v2"/>
+      <path d="M11.5 7.5a1 1 0 0 1 2 0V10c0 2.5-1.8 4.5-4 4.5H8c-1 0-2-.5-2.7-1.3L3.5 11"/>
+      <path d="M3.5 11L2 9.5a.9.9 0 0 1 1.3-1.3L4.5 9.5"/>
+      <path d="M3.5 7V4a1 1 0 0 1 2 0v3"/>
     </svg>
     Pan
   </button>
@@ -807,21 +811,18 @@ function autoLayout() {
 // RENDER
 // ============================================================
 function applyTransform() {
-  const t = `translate(${tx}px,${ty}px) scale(${scale})`;
-  canvasEl.style.transform = t;
+  canvasEl.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
   canvasEl.style.transformOrigin = '0 0';
-  // SVG follows the same transform so arrow paths (in canvas-space) render correctly
-  svgEl.style.transform = t;
-  svgEl.style.transformOrigin = '0 0';
+  // SVG is NOT transformed — renderEdges() converts canvas-space → viewport-space directly
   document.getElementById('zoom-label').textContent = Math.round(scale*100)+'%';
-  // No renderEdges() here — SVG CSS transform handles visual alignment during pan/zoom.
-  // renderEdges() is still called from renderAll() and during node drag.
+  renderEdges();
 }
 
 function renderAll() {
   canvasEl.querySelectorAll('.node').forEach(n=>n.remove());
   nodes.forEach(n => createNodeEl(n));
-  renderEdges();
+  renderEdges(); // immediate pass (offsetHeight may be 0 for brand-new nodes)
+  requestAnimationFrame(renderEdges); // second pass after browser layout
 }
 
 function createNodeEl(node) {
@@ -872,28 +873,27 @@ function renderEdges() {
   svgEl.innerHTML = '';
   const defs = svgNS('defs');
 
-  // Arrow marker
-  const m = svgNS('marker');
-  m.setAttribute('id','arrowhead');
-  m.setAttribute('markerWidth','7'); m.setAttribute('markerHeight','7');
-  m.setAttribute('refX','6'); m.setAttribute('refY','3');
-  m.setAttribute('orient','auto');
-  const mp = svgNS('path');
-  mp.setAttribute('d','M0,0 L0,6 L7,3 z');
-  mp.setAttribute('fill','#5a5a9a');
-  m.appendChild(mp); defs.appendChild(m);
-
-  const mh = svgNS('marker');
-  mh.setAttribute('id','arrowhead-hover');
-  mh.setAttribute('markerWidth','7'); mh.setAttribute('markerHeight','7');
-  mh.setAttribute('refX','6'); mh.setAttribute('refY','3');
-  mh.setAttribute('orient','auto');
-  const mhp = svgNS('path');
-  mhp.setAttribute('d','M0,0 L0,6 L7,3 z');
-  mhp.setAttribute('fill','#ff6b6b');
-  mh.appendChild(mhp); defs.appendChild(mh);
+  // Arrow markers — fixed pixel size (markerUnits=userSpaceOnUse) so they stay 8px at any zoom
+  function makeMarker(id, color) {
+    const mk = svgNS('marker');
+    mk.setAttribute('id', id);
+    mk.setAttribute('markerWidth','8'); mk.setAttribute('markerHeight','8');
+    mk.setAttribute('refX','7'); mk.setAttribute('refY','4');
+    mk.setAttribute('orient','auto');
+    mk.setAttribute('markerUnits','userSpaceOnUse');
+    const p = svgNS('path');
+    p.setAttribute('d','M0,0 L0,8 L8,4 z');
+    p.setAttribute('fill', color);
+    mk.appendChild(p); defs.appendChild(mk);
+  }
+  makeMarker('arrowhead',       '#5a5a9a');
+  makeMarker('arrowhead-hover', '#7070cc');
 
   svgEl.appendChild(defs);
+
+  // Canvas-space → viewport-space (SVG has no CSS transform — coordinates are absolute)
+  const vx = cx => tx + cx * scale;
+  const vy = cy => ty + cy * scale;
 
   edges.forEach(edge => {
     const fEl = document.getElementById(`node-${edge.from}`);
@@ -912,25 +912,20 @@ function renderEdges() {
     const dx = tn.x - fn.x;
     const dy = tn.y - fn.y;
 
-    let sx, sy, tx2, ty2, d;
+    let sx, sy, ex, ey, d;
 
     if (Math.abs(dx) > Math.abs(dy) * 0.8 && dx > 0) {
-      // ── Horizontal connection: parent left → child right
-      // Exit from right-center of parent, enter left-center of child
-      sx  = fn.x + fW;
-      sy  = fn.y + fH / 2;
-      tx2 = tn.x;
-      ty2 = tn.y + tH / 2;
-      const tension = Math.max(Math.abs(dx) * 0.4, 20);
-      d = `M${sx},${sy} C${sx+tension},${sy} ${tx2-tension},${ty2} ${tx2},${ty2}`;
+      // Horizontal: right-center of source → left-center of target
+      sx = vx(fn.x + fW);   sy = vy(fn.y + fH / 2);
+      ex = vx(tn.x);        ey = vy(tn.y + tH / 2);
+      const tension = Math.max(Math.abs(dx) * scale * 0.4, 20);
+      d = `M${sx},${sy} C${sx+tension},${sy} ${ex-tension},${ey} ${ex},${ey}`;
     } else {
-      // ── Vertical / diagonal connection: exit bottom-center, enter top-center
-      sx  = fn.x + fW / 2;
-      sy  = fn.y + fH;
-      tx2 = tn.x + tW / 2;
-      ty2 = tn.y;
-      const tension = Math.max(Math.abs(dy) * 0.42, 24);
-      d = `M${sx},${sy} C${sx},${sy+tension} ${tx2},${ty2-tension} ${tx2},${ty2}`;
+      // Vertical/diagonal: bottom-center of source → top-center of target
+      sx = vx(fn.x + fW / 2); sy = vy(fn.y + fH);
+      ex = vx(tn.x + tW / 2); ey = vy(tn.y);
+      const tension = Math.max(Math.abs(dy) * scale * 0.42, 24);
+      d = `M${sx},${sy} C${sx},${sy+tension} ${ex},${ey-tension} ${ex},${ey}`;
     }
 
     const line = svgNS('path');
@@ -1002,6 +997,7 @@ function updateNodeFromEditor(){
       (n.notes ? `<span class="node-badge">🏷 ${escHtml(n.notes)}</span>` : '')+
       (n.screenshotCount ? `<span class="node-screenshots-count">📸 ${n.screenshotCount}</span>` : '');
   }
+  renderEdges(); // redraw arrows — node height may have changed
   save();
 }
 
