@@ -1251,20 +1251,46 @@ let _previewUrl = '';
 // ── Chrome Extension screenshot bridge ────────────────────────────────────
 // The extension (mrbit-screenshot-extension) takes screenshots using the user's
 // own Chrome browser — same Cato VPN IP, same cookies, no bot-blocking.
-let _mrbitExtReady = false;
+let _mrbitExtReady   = false;
+let _mrbitExtVersion = '';
+const _mrbitExtWaiters = [];
 
-window.addEventListener('mrbit-ext-ready', () => { _mrbitExtReady = true; });
+window.addEventListener('mrbit-ext-ready', (e) => {
+  if (_mrbitExtReady) return;                 // ignore repeat announcements
+  _mrbitExtReady   = true;
+  _mrbitExtVersion = (e && e.detail && e.detail.version) || '?';
+  console.log('[mrbit] screenshot extension detected v' + _mrbitExtVersion);
+  while (_mrbitExtWaiters.length) _mrbitExtWaiters.shift()(true);
+});
 
-// Ping the extension on load (handles race condition if content script was already injected)
-window.dispatchEvent(new CustomEvent('mrbit-ext-ping'));
+// The content script runs at document_start, i.e. BEFORE this inline script, so a single
+// ping fired here would be sent before we could ever hear the reply. Ping with retries
+// until the extension answers (or we give up after ~6s).
+(function pingExt(triesLeft) {
+  if (_mrbitExtReady) return;
+  window.dispatchEvent(new CustomEvent('mrbit-ext-ping'));
+  if (triesLeft > 0) setTimeout(() => pingExt(triesLeft - 1), 250);
+  else console.log('[mrbit] no screenshot extension responded after ~6s');
+})(24);
+
+// Resolves true the moment the extension answers, false after `ms` of silence.
+function waitForExt(ms) {
+  if (_mrbitExtReady) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    _mrbitExtWaiters.push(finish);
+    setTimeout(() => finish(_mrbitExtReady), ms || 6000);
+  });
+}
 
 function takeExtScreenshot(url) {
   return new Promise((resolve, reject) => {
     const id = Math.random().toString(36).slice(2);
     const timer = setTimeout(() => {
       window.removeEventListener('mrbit-ext-result', handler);
-      reject(new Error('Screenshot timed out after 30s'));
-    }, 30000);
+      reject(new Error('Screenshot timed out after 45s'));
+    }, 45000);
 
     function handler(e) {
       if (e.detail.id !== id) return;
@@ -1275,7 +1301,9 @@ function takeExtScreenshot(url) {
     }
 
     window.addEventListener('mrbit-ext-result', handler);
-    window.dispatchEvent(new CustomEvent('mrbit-ext-screenshot', { detail: { url, id } }));
+    window.dispatchEvent(new CustomEvent('mrbit-ext-screenshot', {
+      detail: { url, id, width: 400, height: 1000 }
+    }));
   });
 }
 
@@ -1387,7 +1415,10 @@ function goToScreenshots(){
   goToScreenshots._ssTimer = setTimeout(async () => {
     if (url !== _ssCurrentUrl) return; // switched to another node, abort
 
-    if (_mrbitExtReady) {
+    // Wait for the extension handshake instead of testing a flag exactly once —
+    // the content script may still be starting up on a cold page load.
+    _ssShowLoading('Looking for screenshot extension…');
+    if (await waitForExt(6000)) {
       // Extension is installed — use it
       _ssShowLoading('Opening page in browser…');
       setTimeout(() => {
@@ -1409,17 +1440,25 @@ function goToScreenshots(){
       }
     } else {
       // Extension not installed — show install instructions
+      const onFile = location.protocol === 'file:';
       _ssShowBlocked(
         '<span class="blk-ext-icon">🔌</span>' +
-        '<span class="blk-ext-title">Extension not installed</span>' +
-        'To enable screenshots, install the <b>MrBit Screenshot Helper</b>:<br><br>' +
+        '<span class="blk-ext-title">Extension not responding</span>' +
+        'Screenshots need the <b>MrBit Screenshot Helper</b>:<br><br>' +
         '<ol class="blk-ext-steps">' +
         '<li>Open <b>chrome://extensions</b></li>' +
         '<li>Enable <b>Developer mode</b> (top right)</li>' +
-        '<li>Click <b>Load unpacked</b></li>' +
-        '<li>Select the <b>mrbit-screenshot-extension</b> folder</li>' +
+        '<li>Click <b>Load unpacked</b> → select the ' +
+          '<b>mrbit-screenshot-extension</b> folder (next to this file)</li>' +
+        (onFile
+          ? '<li style="color:#ffb060"><b>Details</b> → turn on ' +
+            '<b>Allow access to file URLs</b> — required, this page is on file://</li>'
+          : '') +
         '<li>Reload this page</li>' +
-        '</ol>'
+        '</ol>' +
+        '<small style="color:#4040a0">Already installed? Open DevTools — if you do not see ' +
+        '“[mrbit-ext] content script ready”, the content script was not injected. ' +
+        'Hit ↻ on the extension card, then reload here.</small>'
       );
     }
   }, 300);

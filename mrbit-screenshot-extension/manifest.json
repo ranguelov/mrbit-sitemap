@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "MrBit Screenshot Helper",
+  "version": "1.1.0",
+  "description": "Takes mobile-width screenshots of pages using your own browser session (same IP, same cookies, no bot-blocking).",
+
+  "permissions": ["tabs"],
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["file:///*", "http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+
+  "action": {
+    "default_title": "MrBit Screenshot Helper"
+  }
+}
